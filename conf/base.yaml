@@ -116,11 +116,12 @@ prompt:
   type: stable_diffusion
   device: ${guidance.device}
   pretrained_model_name_or_path: ${guidance.pretrained_model_name_or_path}
-  prompt: A highly detailed stone bust of Theodoros Kolokotronis
+  prompt1: A highly detailed stone bust of Theodoros Kolokotronis 
+  prompt2: A highly detailed stone bust of  Kolokotronis 
   negative_prompt: ''
-  overhead_threshold: 60.0
-  front_threshold: 45.0
-  back_threshold: 45.0
+  overhead_threshold: 60.0 # 用于判断俯视角
+  front_threshold: 45.0   # 用于判断平视角
+  back_threshold: 45.0    # 用于判断仰视角
   use_cache: true
   use_view_dependent_prompt: true
   view_dependent_prompt_front: false
