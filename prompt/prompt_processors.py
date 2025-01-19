@@ -36,7 +36,10 @@ class DirectionConfig:
 
 @dataclass
 class PromptEmbedding:
-    text_embedding: Float[Tensor, "B D"]
+    # 添加第二个prompt的embedding
+    text_embedding1: Float[Tensor, "B D"]
+    text_embedding2: Float[Tensor, "B D"] 
+    text_embedding: Float[Tensor, "B D"]  # 保留原有变量,存储混合后的embedding
     uncond_text_embedding: Float[Tensor, "B D"]
     text_embedding_view_dependent: Float[Tensor, "B D"]
     uncond_text_embedding_view_dependent: Float[Tensor, "B D"]
@@ -187,7 +190,10 @@ class BasePromptProcessor(nn.Module):
         self.cfg = cfg
         self.device = self.cfg.device
         self.pretrained_model_name_or_path = cfg.pretrained_model_name_or_path
-        self.prompt = cfg.prompt
+        # 添加两个prompt的支持
+        self.prompt1 = cfg.prompt1
+        self.prompt2 = cfg.prompt2
+        self.prompt = self.prompt1  # 保持向后兼容
         self.negative_prompt = cfg.negative_prompt
         self.guidance_model = guidance_model
         # if cfg.use_view_dependent_prompt:
@@ -323,19 +329,29 @@ class BasePromptProcessor(nn.Module):
         raise NotImplementedError
 
     def load_prompt_embeddings(self):
-        self.text_embedding = self.load_from_cache(self.prompt)[None, ...]
+        # 加载两个prompt的embedding
+        self.text_embedding1 = self.load_from_cache(self.prompt1)[None, ...]
+        self.text_embedding2 = self.load_from_cache(self.prompt2)[None, ...]
+
+        # 线性插值混合两个embedding
+        self.text_embedding = 0.5 * self.text_embedding1 + 0.5 * self.text_embedding2
+
         self.uncond_text_embedding = self.load_from_cache(self.negative_prompt)[
             None, ...
         ]
-        self.text_embedding_view_dependent = torch.stack(
-            [self.load_from_cache(prompt) for prompt in self.prompts_view_dependent],
+        # 对view dependent embedding也做相同处理
+        text_embedding_view_dependent1 = torch.stack(
+            [self.load_from_cache(d.prompt(self.prompt1)) for d in self.directions],
             dim=0,
         )
+        text_embedding_view_dependent2 = torch.stack(
+            [self.load_from_cache(d.prompt(self.prompt2)) for d in self.directions],
+            dim=0,
+        )
+        self.text_embedding_view_dependent = 0.5 * text_embedding_view_dependent1 + 0.5 * text_embedding_view_dependent2
+        
         self.uncond_text_embedding_view_dependent = torch.stack(
-            [
-                self.load_from_cache(prompt)
-                for prompt in self.negative_prompts_view_dependent
-            ],
+            [self.load_from_cache(d.negative_prompt(self.negative_prompt)) for d in self.directions],
             dim=0,
         )
 
@@ -344,12 +360,15 @@ class BasePromptProcessor(nn.Module):
         self.prepare_text_encoder(self.guidance_model)
         prompts = (
             [
-                self.prompt,
+                self.prompt1,
+                self.prompt2,
                 self.negative_prompt,
             ]
-            + self.prompts_view_dependent
-            + self.negative_prompts_view_dependent
+            + [d.prompt(self.prompt1) for d in self.directions]
+            + [d.prompt(self.prompt2) for d in self.directions]
+            + [d.negative_prompt(self.negative_prompt) for d in self.directions]
         )
+
         prompts_to_process = []
         for prompt in prompts:
             if self.use_cache:
@@ -374,6 +393,8 @@ class BasePromptProcessor(nn.Module):
 
     def get_prompt_embedding(self) -> PromptEmbedding:
         return PromptEmbedding(
+            text_embedding1=self.text_embedding1,
+            text_embedding2=self.text_embedding2,
             text_embedding=self.text_embedding,
             uncond_text_embedding=self.uncond_text_embedding,
             text_embedding_view_dependent=self.text_embedding_view_dependent,
