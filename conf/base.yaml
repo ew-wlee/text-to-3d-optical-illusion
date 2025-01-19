@@ -118,6 +118,7 @@ prompt:
   pretrained_model_name_or_path: ${guidance.pretrained_model_name_or_path}
   prompt1: A highly detailed stone bust of Theodoros Kolokotronis 
   prompt2: A highly detailed stone bust of  Kolokotronis 
+  prompt: ${prompt.prompt1}  # 添加这一行，向后兼容
   negative_prompt: ''
   overhead_threshold: 60.0 # 用于判断俯视角
   front_threshold: 45.0   # 用于判断平视角

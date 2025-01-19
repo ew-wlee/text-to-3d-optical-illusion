@@ -106,14 +106,15 @@ class Trainer(nn.Module):
         if cfg.estimators.normal.enabled:
             self.normal_estimator = DPT(device=cfg.device, mode="normal")
 
+        # 修改这里的prompt处理逻辑
         if self.mode == "text_to_3d":
             self.dataset = CameraPoseProvider(cfg.data)
-            # 使用prompt1作为主prompt
-            prompt = cfg.prompt.prompt1.strip().replace(" ", "_").lower()[:64]
+            # 使用prompt1作为主prompt，如果不存在则尝试使用prompt
+            prompt = (cfg.prompt.get("prompt1", cfg.prompt.get("prompt", ""))).strip().replace(" ", "_").lower()[:64]
         elif self.mode == "image_to_3d":
             self.dataset = SingleViewCameraPoseProvider(cfg.data)
-            # 使用prompt1作为主prompt
-            prompt = cfg.prompt.prompt1
+            # 使用prompt1作为主prompt，如果不存在则尝试使用prompt
+            prompt = cfg.prompt.get("prompt1", cfg.prompt.get("prompt", ""))
             self.text_prompt = prompt
 
         self.loader = iter(
