@@ -1,4 +1,4 @@
-device: cuda
+device: cuda:2
 batch_size: 4
 grad_accum: 1
 max_steps: 15000
@@ -114,7 +114,7 @@ guidance:
   grad_clip: null
 prompt:
   type: stable_diffusion
-  device: ${guidance.device}
+  device: ${device}
   pretrained_model_name_or_path: ${guidance.pretrained_model_name_or_path}
   prompt1: A highly detailed stone bust of Theodoros Kolokotronis 
   prompt2: A highly detailed stone bust of  Kolokotronis 
