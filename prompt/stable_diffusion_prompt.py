@@ -21,15 +21,12 @@ class StableDiffusionPromptProcessor(BasePromptProcessor):
             self.text_encoder = CLIPTextModel.from_pretrained(
                 self.pretrained_model_name_or_path,
                 subfolder="text_encoder",
-                device_map={"": self.device},  # 确保在指定设备上
                 cache_dir="./.cache",
-            )
+            ).to(self.device)
         else:
             self.tokenizer = guidance_model.pipe.tokenizer
-            self.text_encoder = guidance_model.pipe.text_encoder
-            # 确保text_encoder在正确的设备上
-            self.text_encoder = self.text_encoder.to(self.device)
-
+            # 确保text encoder在正确设备上
+            self.text_encoder = guidance_model.pipe.text_encoder.to(self.device)
 
     def encode_prompts(self, prompts):
         with torch.no_grad():
@@ -41,8 +38,6 @@ class StableDiffusionPromptProcessor(BasePromptProcessor):
                 return_tensors="pt",
             ).to(self.device)
             # print(tokens.input_ids.device)
-            # 确保text_encoder在正确的设备上
-            self.text_encoder = self.text_encoder.to(self.device)
             text_embeddings = self.text_encoder(tokens.input_ids)[0]
 
         return text_embeddings

@@ -277,6 +277,9 @@ class BasePromptProcessor(nn.Module):
 
         self.direction2idx = {d.name: i for i, d in enumerate(self.directions)}
 
+        # 确保所有计算在同一设备上
+        self.to(self.device)
+
         if cfg.use_prompt_debiasing:
             # TODO: add prompt debaising
             assert (
@@ -317,7 +320,7 @@ class BasePromptProcessor(nn.Module):
         )
         if not os.path.exists(cache_path):
             raise FileNotFoundError(
-                f"Text embedding file {cache_path} for model {self.cfg.pretrained_model_name_or_path} and prompt [{prompt}] not found."
+                f"Text embedding file {cache_path} not found."
             )
 
         return torch.load(cache_path, map_location=self.device)
@@ -381,6 +384,8 @@ class BasePromptProcessor(nn.Module):
             prompts_to_process.append(prompt)
 
         if len(prompts_to_process) > 0:
+            # 确保text encoder在正确设备上
+            self.text_encoder = self.text_encoder.to(self.device)
             prompt_embeddings = self.encode_prompts(prompts_to_process)
 
             for prompt, embedding in zip(prompts_to_process, prompt_embeddings):
