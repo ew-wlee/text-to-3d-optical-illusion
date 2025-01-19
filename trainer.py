@@ -90,7 +90,7 @@ class Trainer(nn.Module):
             self.cfg.prompt.prompt.strip().replace(" ", "_").lower()[:64]
         )  # length limited by wandb
         day_timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
-        hms_timestamp = datetime.datetime.now().strftime("%H%M%S")
+        hms_timestamp = datetime.datetime.now().strftime("%H-%M-%S")
         timestamp = f"{hms_timestamp}|{day_timestamp}"
         num_runs = get_num_runs("gsgen")
         uid = f"{num_runs}|{timestamp}|{prompt}"
@@ -108,9 +108,14 @@ class Trainer(nn.Module):
 
         if self.mode == "text_to_3d":
             self.dataset = CameraPoseProvider(cfg.data)
+            # 使用prompt1作为主prompt
+            prompt = cfg.prompt.prompt1.strip().replace(" ", "_").lower()[:64]
         elif self.mode == "image_to_3d":
             self.dataset = SingleViewCameraPoseProvider(cfg.data)
-            self.text_prompt = self.cfg.prompt.prompt
+            # 使用prompt1作为主prompt
+            prompt = cfg.prompt.prompt1
+            self.text_prompt = prompt
+
         self.loader = iter(
             DataLoader(
                 self.dataset,
@@ -181,6 +186,7 @@ class Trainer(nn.Module):
         gc.collect()
         torch.cuda.empty_cache()
 
+        # 使用prompt1作为保存路径
         self.save_dir = Path(f"./checkpoints/{prompt}/{day_timestamp}/{hms_timestamp}")
         if not self.save_dir.exists():
             self.save_dir.mkdir(parents=True, exist_ok=True)
