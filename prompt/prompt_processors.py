@@ -35,30 +35,39 @@ class DirectionConfig:
 
 
 @dataclass
-class PromptEmbedding:
-    # 添加第二个prompt的embedding
-    text_embedding1: Float[Tensor, "B D"]
-    text_embedding2: Float[Tensor, "B D"] 
-    text_embedding: Float[Tensor, "B D"]  # 保留原有变量,存储混合后的embedding
-    uncond_text_embedding: Float[Tensor, "B D"]
-    text_embedding_view_dependent: Float[Tensor, "B D"]
-    uncond_text_embedding_view_dependent: Float[Tensor, "B D"]
-    directions: List[DirectionConfig]
-    direction2idx: Dict[str, int]
-    use_perp_negative: bool = False
-    debug: bool = False
+class PromptEmbedding(nn.Module):
+    def __init__(
+        self,
+        text_embedding1, # 新增
+        text_embedding2, # 新增
+        uncond_text_embedding,
+        text_embedding_view_dependent1, # 新增
+        text_embedding_view_dependent2, # 新增
+        uncond_text_embedding_view_dependent,
+        directions,
+        direction2idx,
+        use_perp_negative=False,
+        debug=False,
+    ):
+        super().__init__()
+        self.text_embedding1 = text_embedding1
+        self.text_embedding2 = text_embedding2
+        self.uncond_text_embedding = uncond_text_embedding
+        self.text_embedding_view_dependent1 = text_embedding_view_dependent1
+        self.text_embedding_view_dependent2 = text_embedding_view_dependent2
+        self.uncond_text_embedding_view_dependent = uncond_text_embedding_view_dependent
+        self.directions = directions
+        self.direction2idx = direction2idx
+        self.use_perp_negative = use_perp_negative
+        self.debug = debug
 
-    # perp neg interpolation params, adapted from threestudio (https://github1s.com/threestudio-project/threestudio/blob/HEAD/threestudio/models/prompt_processors/base.py)
-    perp_neg_f_sb: Tuple[float, float, float] = (1, 0.5, -0.606)
-    perp_neg_f_fsb: Tuple[float, float, float] = (1, 0.5, +0.967)
-    perp_neg_f_fs: Tuple[float, float, float] = (
-        4,
-        0.5,
-        -2.426,
-    )  # f_fs(1) = 0, a, b > 0
-    perp_neg_f_sf: Tuple[float, float, float] = (4, 0.5, -2.426)
+        # 设置perpendicular negative的参数
+        self.perp_neg_f_fs = (0.8, 0.2, 0.5)  # front to front-side
+        self.perp_neg_f_sf = (0.8, 0.2, 0.5)  # side to front-side
+        self.perp_neg_f_sb = (0.8, 0.2, 0.5)  # side to back-side
+        self.perp_neg_f_fsb = (0.8, 0.2, 0.5)  # front-side to back-side
 
-    def get_text_embedding(
+    def get_text_embedding(  # 修改get_text_embedding方法返回双prompt的embeddings
         self,
         elevation,
         azimuth,
@@ -74,22 +83,25 @@ class PromptEmbedding:
                     d.condition(elevation, azimuth, camera_distances)
                 ] = self.direction2idx[d.name]
 
-            # Get text embeddings
-            text_emb = self.text_embedding_view_dependent[direction_idx]
+            # 获取两个prompt的view-dependent embeddings
+            text_emb1 = self.text_embedding_view_dependent1[direction_idx]
+            text_emb2 = self.text_embedding_view_dependent2[direction_idx]
             uncond_text_emb = self.uncond_text_embedding_view_dependent[direction_idx]
-            # console.print(direction_idx)
         else:
-            text_emb = self.text_embedding.expand(bs, -1, -1)
+            # 扩展两个prompt的embeddings到batch size
+            text_emb1 = self.text_embedding1.expand(bs, -1, -1)
+            text_emb2 = self.text_embedding2.expand(bs, -1, -1)
             uncond_text_emb = self.uncond_text_embedding.expand(bs, -1, -1)
 
         if self.debug:
             return {
-                "direction_idx": direction_idx,
-                "text_embedding": torch.cat([text_emb, uncond_text_emb], dim=0),
+                "direction_idx": direction_idx if use_view_dependent_prompt else None,
+                "text_embedding1": text_emb1,
+                "text_embedding2": text_emb2,
+                "uncond_text_embedding": uncond_text_emb,
             }
 
-        # mind the order, corresponding to `chunck` in stable_diffusion.py fn `compute_grad_sds`
-        return torch.cat([text_emb, uncond_text_emb], dim=0)
+        return text_emb1, text_emb2, uncond_text_emb
 
     def get_text_embeddings_perp_neg(
         self,
@@ -109,20 +121,23 @@ class PromptEmbedding:
             direction_idx[
                 d.condition(elevation, azimuth, camera_distances)
             ] = self.direction2idx[d.name]
-        # 0 - side view
-        # 1 - front view
-        # 2 - back view
-        # 3 - overhead view
 
-        pos_text_embeddings = []
+        pos_text_embeddings1 = []
+        pos_text_embeddings2 = []
         neg_text_embeddings = []
         neg_guidance_weights = []
         uncond_text_embeddings = []
 
-        side_emb = self.text_embedding_view_dependent[0]
-        front_emb = self.text_embedding_view_dependent[1]
-        back_emb = self.text_embedding_view_dependent[2]
-        overhead_emb = self.text_embedding_view_dependent[3]
+        # 获取每个视角的embeddings
+        side_emb1 = self.text_embedding_view_dependent1[0]
+        front_emb1 = self.text_embedding_view_dependent1[1]
+        back_emb1 = self.text_embedding_view_dependent1[2]
+        overhead_emb1 = self.text_embedding_view_dependent1[3]
+
+        side_emb2 = self.text_embedding_view_dependent2[0]
+        front_emb2 = self.text_embedding_view_dependent2[1]
+        back_emb2 = self.text_embedding_view_dependent2[2]
+        overhead_emb2 = self.text_embedding_view_dependent2[3]
 
         for idx, ele, azi, dis in zip(
             direction_idx, elevation, azimuth, camera_distances
@@ -130,9 +145,11 @@ class PromptEmbedding:
             azi = shift_azimuth_deg(azi)  # to (-180, 180)
             uncond_text_embeddings.append(
                 self.uncond_text_embedding_view_dependent[idx]
-            )  # should be ""
+            )
+
             if idx.item() == 3:  # overhead view
-                pos_text_embeddings.append(overhead_emb)  # side view
+                pos_text_embeddings1.append(overhead_emb1)
+                pos_text_embeddings2.append(overhead_emb2)
                 # dummy
                 neg_text_embeddings += [
                     self.uncond_text_embedding_view_dependent[idx],
@@ -142,42 +159,65 @@ class PromptEmbedding:
             else:  # interpolating views
                 if torch.abs(azi) < 90:
                     # front-side interpolation
-                    # 0 - complete side, 1 - complete front
                     r_inter = 1 - torch.abs(azi) / 90
-                    pos_text_embeddings.append(
-                        r_inter * front_emb + (1 - r_inter) * side_emb
+                    pos_text_embeddings1.append(
+                        r_inter * front_emb1 + (1 - r_inter) * side_emb1
                     )
-                    neg_text_embeddings += [front_emb, side_emb]
+                    pos_text_embeddings2.append(
+                        r_inter * front_emb2 + (1 - r_inter) * side_emb2
+                    )
+                    neg_text_embeddings += [front_emb1, side_emb1]
                     neg_guidance_weights += [
                         -shifted_expotional_decay(*self.perp_neg_f_fs, r_inter),
                         -shifted_expotional_decay(*self.perp_neg_f_sf, 1 - r_inter),
                     ]
                 else:
                     # side-back interpolation
-                    # 0 - complete back, 1 - complete side
                     r_inter = 2.0 - torch.abs(azi) / 90
-                    pos_text_embeddings.append(
-                        r_inter * side_emb + (1 - r_inter) * back_emb
+                    pos_text_embeddings1.append(
+                        r_inter * side_emb1 + (1 - r_inter) * back_emb1
                     )
-                    neg_text_embeddings += [side_emb, front_emb]
+                    pos_text_embeddings2.append(
+                        r_inter * side_emb2 + (1 - r_inter) * back_emb2
+                    )
+                    neg_text_embeddings += [side_emb1, front_emb1]
                     neg_guidance_weights += [
                         -shifted_expotional_decay(*self.perp_neg_f_sb, r_inter),
                         -shifted_expotional_decay(*self.perp_neg_f_fsb, r_inter),
                     ]
 
-        text_embeddings = torch.cat(
+        # 返回两组embeddings
+        text_embeddings1 = torch.cat(
             [
-                torch.stack(pos_text_embeddings, dim=0),
+                torch.stack(pos_text_embeddings1, dim=0),
                 torch.stack(uncond_text_embeddings, dim=0),
                 torch.stack(neg_text_embeddings, dim=0),
             ],
             dim=0,
         )
 
-        return text_embeddings, torch.as_tensor(
+        text_embeddings2 = torch.cat(
+            [
+                torch.stack(pos_text_embeddings2, dim=0),
+                torch.stack(uncond_text_embeddings, dim=0),
+                torch.stack(neg_text_embeddings, dim=0),
+            ],
+            dim=0,
+        )
+
+        return text_embeddings1, text_embeddings2, torch.as_tensor(
             neg_guidance_weights, device=elevation.device
         ).reshape(batch_size, 2)
 
+    def to(self, device):
+        """将所有embeddings移动到指定设备"""
+        self.text_embedding1 = self.text_embedding1.to(device)
+        self.text_embedding2 = self.text_embedding2.to(device)
+        self.uncond_text_embedding = self.uncond_text_embedding.to(device)
+        self.text_embedding_view_dependent1 = self.text_embedding_view_dependent1.to(device)
+        self.text_embedding_view_dependent2 = self.text_embedding_view_dependent2.to(device)
+        self.uncond_text_embedding_view_dependent = self.uncond_text_embedding_view_dependent.to(device)
+        return self
 
 def shift_azimuth_deg(azimuth: Float[Tensor, "..."]) -> Float[Tensor, "..."]:
     # shift azimuth angle (in degrees), to [-180, 180]
@@ -193,13 +233,9 @@ class BasePromptProcessor(nn.Module):
         # 添加两个prompt的支持
         self.prompt1 = cfg.prompt1
         self.prompt2 = cfg.prompt2
-        self.prompt = self.prompt1  # 保持向后兼容
+        self.prompt = self.prompt1  # 这么设计是保持向后兼容（可能要继续修改）
         self.negative_prompt = cfg.negative_prompt
         self.guidance_model = guidance_model
-        # if cfg.use_view_dependent_prompt:
-        #     self.prompt_side = cfg.prompt_side
-        #     self.prompt_back = cfg.prompt_back
-        #     self.prompt_overhead = cfg.prompt_overhead
 
         self.use_cache = cfg.use_cache
         if cfg.use_cache:
@@ -304,7 +340,6 @@ class BasePromptProcessor(nn.Module):
             ]
         )
         print(prompts_vd_display)
-        # console.print(prompts_vd_display)
 
         self.negative_prompts_view_dependent = [
             d.negative_prompt(self.negative_prompt) for d in self.directions
@@ -332,26 +367,20 @@ class BasePromptProcessor(nn.Module):
         raise NotImplementedError
 
     def load_prompt_embeddings(self):
-        # 加载两个prompt的embedding
+        # 分别加载两个prompt的embedding
         self.text_embedding1 = self.load_from_cache(self.prompt1)[None, ...]
         self.text_embedding2 = self.load_from_cache(self.prompt2)[None, ...]
-
-        # 线性插值混合两个embedding
-        self.text_embedding = 0.5 * self.text_embedding1 + 0.5 * self.text_embedding2
-
-        self.uncond_text_embedding = self.load_from_cache(self.negative_prompt)[
-            None, ...
-        ]
+        self.uncond_text_embedding = self.load_from_cache(self.negative_prompt)[None, ...]
+        
         # 对view dependent embedding也做相同处理
-        text_embedding_view_dependent1 = torch.stack(
+        self.text_embedding_view_dependent1 = torch.stack(
             [self.load_from_cache(d.prompt(self.prompt1)) for d in self.directions],
             dim=0,
         )
-        text_embedding_view_dependent2 = torch.stack(
+        self.text_embedding_view_dependent2 = torch.stack(
             [self.load_from_cache(d.prompt(self.prompt2)) for d in self.directions],
             dim=0,
         )
-        self.text_embedding_view_dependent = 0.5 * text_embedding_view_dependent1 + 0.5 * text_embedding_view_dependent2
         
         self.uncond_text_embedding_view_dependent = torch.stack(
             [self.load_from_cache(d.negative_prompt(self.negative_prompt)) for d in self.directions],
@@ -359,7 +388,6 @@ class BasePromptProcessor(nn.Module):
         )
 
     def prepare_prompts(self):
-        # NOTE: self.guidance_model is None means initialize the text encoder and tokenizer separetely from unet and vae
         self.prepare_text_encoder(self.guidance_model)
         prompts = (
             [
@@ -400,9 +428,9 @@ class BasePromptProcessor(nn.Module):
         return PromptEmbedding(
             text_embedding1=self.text_embedding1,
             text_embedding2=self.text_embedding2,
-            text_embedding=self.text_embedding,
             uncond_text_embedding=self.uncond_text_embedding,
-            text_embedding_view_dependent=self.text_embedding_view_dependent,
+            text_embedding_view_dependent1=self.text_embedding_view_dependent1,
+            text_embedding_view_dependent2=self.text_embedding_view_dependent2,
             uncond_text_embedding_view_dependent=self.uncond_text_embedding_view_dependent,
             directions=self.directions,
             direction2idx=self.direction2idx,
@@ -473,11 +501,13 @@ class BasePromptProcessor(nn.Module):
         return debiased_prompts
 
     def update(self, step):
-        raise NotImplementedError("Update not implemented")
+        pass
 
     def forward(self):
         return self.get_prompt_embedding()
 
     def cleanup(self):
-        del self.tokenizer
-        del self.text_encoder
+        if hasattr(self, 'tokenizer'):
+            del self.tokenizer
+        if hasattr(self, 'text_encoder'):
+            del self.text_encoder

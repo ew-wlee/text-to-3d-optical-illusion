@@ -100,10 +100,14 @@ guidance:
   half_precision_weights: true
   use_view_dependent_prompt: true
   enable_attention_slicing: false
+  num_inference_steps: 50
   scheduler:
     type: ddim
     args: null
   guidance_scale: 100.0
+  noise:
+    mix_ratio: 0.5 # 添加噪声混合参数
+    mix_method: "weighted"  # 混合方法: weighted, alternate, adaptive, factorized
   weighting_strategy: sds
   min_step_percent: 0.02
   max_step_percent:
@@ -189,3 +193,5 @@ auxiliary:
   mean_only: true
   normalize: false
   grad_clip: null
+noise:
+  mix_ratio: 0.5  # 噪声混合系数α∈[0,1]
